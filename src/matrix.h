@@ -2,6 +2,7 @@
 #define __MATRIX_H__
 #include <stdlib.h>
 #include <stddef.h>
+#include <inttypes.h>
 #include <stdbool.h>
 
 #if defined(_MSC_VER)
@@ -11,21 +12,24 @@ typedef SSIZE_T ssize_t;
 #include <sys/types.h>
 #endif
 
-typedef size_t indx_t;   // Type large enough to hold an arbitrary index 
-typedef ssize_t sindx_t; // Signed type large enough to hold an index
+typedef int32_t idx_t;   // Type large enough to hold an arbitrary index 
 
 typedef struct {
-    double* values;
-    indx_t* col_ind;
-    indx_t* row_ptr_begin;
-    indx_t* row_ptr_end;
-    size_t m,n;
-    size_t nz;
+    idx_t  index;
+    uint32_t  nz;
+    idx_t* cols;
+    float*  values;
+} row_t;
+
+typedef struct {
+    row_t** rowPtr;
+    uint32_t m,n;
+    uint32_t nz;
 } matrix_t;
 
-void dump_nonzeros( const matrix_t* mat );
+void matrix_dump( const matrix_t* mat );
 
-bool load_matrix_market(const char *filename,  matrix_t *mat );
+bool matrix_loadMM( const char *filename,  matrix_t *mat );
 
 void matrix_free( matrix_t* mat );
 

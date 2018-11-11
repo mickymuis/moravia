@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <assert.h>
 
 #include "matrix.h"
 
@@ -16,7 +17,7 @@
 
 typedef struct {
     size_t row, col;
-    double val;
+    float val;
 } mmelement_t;
 
 int
@@ -31,8 +32,8 @@ compareMMElement( const void* a, const void* b ) {
 
 static bool
 read_matrix_market(const char *filename,
-        mmelement_t **elements_ptr, size_t* nz_ptr,
-        size_t* n_rows_ptr, size_t* n_cols_ptr)
+        mmelement_t **elements_ptr, uint32_t* nz_ptr,
+        uint32_t* n_rows_ptr, uint32_t* n_cols_ptr)
 {
     FILE *fh = fopen(filename, "r");
     if (!fh)
@@ -106,71 +107,75 @@ read_matrix_market(const char *filename,
  */
 
 static void
-load_elements(const mmelement_t* elements, size_t nz,
-        double values[],
-        indx_t col_ind[],
-        indx_t row_ptr_begin[], indx_t row_ptr_end[])
+load_elements(const mmelement_t* elements, size_t n, size_t nz, row_t* rowPtr[] )
 {
-    indx_t current_val = 0;
-    indx_t current_row = 0;
-    row_ptr_begin[0] = 0;
+    idx_t idx = 0;
+    idx_t row = elements[0].row;
+    
+
+    idx_t colsTemp[n];
+    float  valuesTemp[n];
 
     for( size_t i =0; i < nz; i++ ) {
 
+        const mmelement_t *it = &elements[i];
+
+        valuesTemp[idx] = it->val;
+        colsTemp[idx] = it->col;
+        idx++;
+        
+        // We have complete one row, write it to the datastructure
+        if ( i+1 == nz || elements[i+1].row != row)
         {
-            const mmelement_t *it = &elements[i];
-            if (it->row != current_row)
-            {
-                if (current_row + 1 != it->row)
-                {
-                    fprintf(stderr, "(e) Row skipping not implemented.\n");
-                    abort();
-                }
+            rowPtr[row] = malloc( sizeof(row_t) );
+            assert( rowPtr[row] != NULL );
 
-                row_ptr_end[current_row] = current_val - 1;
-                current_row++;
-                row_ptr_begin[current_row] = current_val;
-            }
+            rowPtr[row]->nz = idx;
+            rowPtr[row]->values = calloc( idx, sizeof(float) );
+            assert( rowPtr[row]->values != NULL );
+            rowPtr[row]->cols = calloc( idx, sizeof(idx_t) );
+            assert( rowPtr[row]->cols != NULL );
 
-            values[current_val] = it->val;
-            col_ind[current_val] = it->col;
-            current_val++;
+            memcpy( rowPtr[row]->values, valuesTemp, idx * sizeof(float) );
+            memcpy( rowPtr[row]->cols, colsTemp, idx * sizeof( idx_t) );
+            rowPtr[row]->index =row;
+
+            if( i+1 != nz )
+                row = elements[i+1].row;
+            idx =0;
         }
-
-        row_ptr_end[current_row] = current_val - 1;
     }
 }
 
 void
-dump_nonzeros( const matrix_t* mat ) {
+matrix_dump( const matrix_t* mat ) {
 
-    for (size_t row = 0; row < mat->m; ++row)
+    for (int i = 0; i < mat->m; ++i)
     {
-        for (indx_t idx = mat->row_ptr_begin[row]; idx <= mat->row_ptr_end[row]; ++idx)
+        if( mat->rowPtr[i] == NULL ) continue;
+        if( mat->rowPtr[i]->index != i ) continue; // contracted node
+        for (idx_t idx =0; idx < mat->rowPtr[i]->nz; ++idx)
         {
-            printf("%ld %ld %f\n", row, mat->col_ind[idx], mat->values[idx]);
+            printf("(%d)->(%d) weight %f\n", i, mat->rowPtr[i]->cols[idx], mat->rowPtr[i]->values[idx] );
         }
     }
 }
 
 
 bool
-load_matrix_market(const char *filename, matrix_t *mat ) {
+matrix_loadMM(const char *filename, matrix_t *mat ) {
 
     mmelement_t *elements = NULL;
 
     if (!read_matrix_market(filename, &elements, &mat->nz, &mat->m, &mat->n))
         return false;
 
-    mat->values = calloc( mat->nz, sizeof(double) );
-    mat->col_ind= calloc( mat->nz, sizeof(indx_t) );
-    mat->row_ptr_begin = calloc( mat->m, sizeof(indx_t) );
-    mat->row_ptr_end = calloc( mat->m, sizeof(indx_t) );
+    mat->rowPtr = calloc( mat->m, sizeof(row_t*) );
 
-    load_elements(elements, mat->nz, mat->values, mat->col_ind, mat->row_ptr_begin, mat->row_ptr_end);
+    load_elements(elements, mat->n, mat->nz, mat->rowPtr);
     free( elements );
 
-    printf("(i) Import ok: %ld x %ld matrix, %ld non-zeroes\n",
+    printf("(i) Import ok: %d x %d matrix, %d non-zeroes\n",
             mat->m, mat->n, mat->nz);
 
     return true;
@@ -178,9 +183,13 @@ load_matrix_market(const char *filename, matrix_t *mat ) {
 
 void
 matrix_free( matrix_t* mat ) {
-    free( mat->values );
-    free( mat->col_ind );
-    free( mat->row_ptr_begin );
-    free( mat->row_ptr_end );
+    for( size_t i =0; i < mat->m; i++ ) {
+        if( mat->rowPtr[i] != NULL && mat->rowPtr[i]->index == i ) {
+            free( mat->rowPtr[i]->values );
+            free( mat->rowPtr[i]->cols );
+            free( mat->rowPtr[i] );
+        }
+    }
+    free( mat->rowPtr );
 }
 
