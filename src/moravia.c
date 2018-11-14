@@ -6,10 +6,16 @@
 #include <string.h>
 #include <assert.h>
 
+/* The edge_t type is only used to store the edges of the resulting MSP */
+typedef struct {
+    idx_t from, to;
+    float weight;
+} edge_t;
+
 void
 printSuperNodes( graph_t* g ) {
 
-    for( size_t i=0; i < g->m; i++ ) {
+    for( idx_t i=0; i < g->m; i++ ) {
         printf( "%d: ", i );
         node_t* n =g->nodePtr[g->nodePtr[i]->first];
         while( 1 ) {
@@ -22,6 +28,10 @@ printSuperNodes( graph_t* g ) {
     }
 }
 
+/** Compute the contracted node from @n1 and @n2 by 
+ *  merging their supernode pointer chains together.
+ *  The level of all nodes in the chain is set to the highest level + 1
+ */
 void
 contractNodes( graph_t* g, node_t* n1, node_t* n2 ) {
     node_t* n1_last = g->nodePtr[n1->first];
@@ -45,128 +55,6 @@ contractNodes( graph_t* g, node_t* n1, node_t* n2 ) {
         n = g->nodePtr[n->next];
     }
 }
-
-/** Compute the contracted node from @n1 and @n2 by 
- *  computing the union of their edges.
- *  For edges with identical end nodes, the minimum edge is taken.
- */
-node_t*
-contractNodes2( graph_t* g, node_t* n1, node_t* n2 ) {
-    node_t* contracted =malloc( sizeof(node_t) );
-    // Allocate the maximum amount of memory we could need, we will free it partially later
-    contracted->weights =malloc( (n1->size+n2->size) * sizeof(float) );
-    contracted->edges =malloc( (n1->size+n2->size) * sizeof(idx_t) );
-
-    contracted->index =n1->index;
-
-    // Compute the union of edges
-    size_t i1 =0, i2 =0, off =0;
-    while( i1 < n1->size || i2 < n2->size ) {
-        idx_t idx =-1;
-        float weight1 =INFINITY, weight2 =INFINITY;
-
-        if( i1 < n1->size && ( i2 == n2->size || n1->edges[i1] <= n2->edges[i2] )) {
-            idx =n1->edges[i1];
-            weight1 = n1->weights[i1];
-        }
-        if( i2 < n2->size && ( i1 == n1->size || n2->edges[i2] <= n1->edges[i1] )) {
-            idx =n2->edges[i2];
-            weight2 = n2->weights[i2];
-        }
-
-        if( !isinf( weight1 ) ) i1++;
-        if( !isinf( weight2 ) ) i2++;
-        
-        // We don't want to introduce self-edges
-        if( idx == n1->index || idx == n2->index || idx < 0 ) continue;
-
-
-        contracted->edges[off] =idx;
-        contracted->weights[off] =fminf( weight1, weight2 );
-        
-        //printf( "-%ld: %d\n", off, contracted->edges[off] );
-        if( off ) assert( contracted->edges[off-1] < contracted->edges[off] );
-
-        // Both n1 and n2 have an edge to the same node
-        if( !isinf( weight1 ) && !isinf( weight2 ) ) {
-            node_t* adjnode = g->nodePtr[idx];
-            // Reduce the degree of this node by one. 
-            // This is only important to optimize the search process
-            adjnode->degree--;
-        }
-        
-        // Now, unfortunately, we have to fix all edges from adjacent nodes to point to this supernode
-#if 0
-        node_t* adjnode = g->nodePtr[idx];
-        idx_t n1_off =-1, n2_off =-1, lt_n1_off =-1;
-        assert( adjnode != NULL ); // Assert graph is consistent
-        for( size_t i =0; i < adjnode->size; i++ ) {
-            if( adjnode->edges[i] == n1->index ) {
-                assert( n1_off == -1 );
-                n1_off =i;
-            }
-            else if( adjnode->edges[i] == n2->index ) {
-                assert( n2_off == -1 );
-                n2_off =i;
-            }
-            // For reordering the array later, lest it be neccessary
-            if( adjnode->edges[i] != -1 && adjnode->edges[i] < n1->index ) lt_n1_off =i;
-        }
-        // Fix edges pointing to n2 by pointing them to n1 instead
-        if( n2_off != -1 ) {
-            // Take the min weight
-            //printf( "debug: removing (%d)->(%d)\n", adjnode->index, n2->index );
-            if( n1_off != -1 ) {
-                adjnode->weights[n1_off] = fminf( adjnode->weights[n1_off], adjnode->weights[n2_off] );
-                adjnode->edges[n2_off] = -1;
-                        
-            } else {
-                /*printf( "Swapping n1=%d for n2=%d in (%d), before: ", n1->index, n2->index, adjnode->index );
-                for( int i =0; i < adjnode->size; i++ ) printf( "%d ", adjnode->edges[i] );
-                printf( "\n" );*/
-                // We cannot just swap the index of n2 with the index of n1 as the array becomes unsorted
-                // adjnode->edges[n2_off] = n1->index;
-                float weight =adjnode->weights[n2_off];
-                // Handle the edge cases first
-                if( lt_n1_off == n2_off 
-                 || lt_n1_off == n2_off-1 
-                 || (n2_off == adjnode->size-1 && n1->index > n2->index )
-                 || (n2_off == 0 && n1->index < n2->index ) ) {
-                    lt_n1_off = n2_off;
-                }
-                else if( n1->index < n2->index ) {
-                    lt_n1_off++;
-                    memmove( &adjnode->edges[lt_n1_off+1], &adjnode->edges[lt_n1_off], (n2_off-lt_n1_off) * sizeof(idx_t) );
-                    memmove( &adjnode->weights[lt_n1_off+1], &adjnode->weights[lt_n1_off], (n2_off-lt_n1_off) * sizeof(float) );
-
-                } else { // n2 < n1
-                    memmove( &adjnode->edges[n2_off], &adjnode->edges[n2_off+1], (lt_n1_off-n2_off) * sizeof(idx_t) );
-                    memmove( &adjnode->weights[n2_off], &adjnode->weights[n2_off+1], (lt_n1_off-n2_off) * sizeof(float) );
-
-                }
-                adjnode->edges[lt_n1_off] =n1->index;
-                adjnode->weights[lt_n1_off] =weight;
-
-                adjnode->degree--; // We have actually removed an edge
-                /*printf( "after: " );
-                for( int i =0; i < adjnode->size; i++ ) printf( "%d ", adjnode->edges[i] );
-                printf( "\n" );*/
-            }
-        }
-#endif
-
-        off++;
-    }
-    // Resize the arrays to free unused space
-    contracted->weights =realloc( contracted->weights, off * sizeof(float) );
-    contracted->edges =realloc( contracted->edges, off * sizeof(idx_t) );
-    contracted->size =off;
-    contracted->degree =off;
-
-
-    return contracted;
-}
-
 
 bool
 computeMinEdge( graph_t* g, node_t* node, idx_t* from, idx_t* to, float* weight ) {
@@ -215,9 +103,6 @@ minDegree( node_t* nodes[], size_t m, int level, idx_t* idx ) {
     for( size_t i =0; i < m; i++ ) {
         // This node has been removed
         if( nodes[i] == NULL ) continue;
-        // This node has been contracted with another node 
-        //if( nodes[i]->first != i ) continue;
-        //assert( nodes[i]->index == i );
         if( level != 0 && nodes[i]->level == level ) {
             minDeg =nodes[i]->degree;
             minRow =i;
@@ -265,13 +150,13 @@ removeSubGraph( graph_t* g, node_t* nodes[], node_t* n ) {
 }
 
 int
-boruvka( graph_t* g ) {
+boruvka( graph_t* g, edge_t *edgelist ) {
 
+    int numedges =0;
     const int np =16;
     const size_t m =g->m;
     node_t* candidate[m];
     idx_t selected[np];
-    float totalWeight =0.f; // Total weight of the MSP
     int level =0;
 
     while(1) {
@@ -290,7 +175,7 @@ boruvka( graph_t* g ) {
             node_t* selectedNode =candidate[sidx];
             assert( selectedNode != NULL );
 
-            //printf( "debug: selected node %d=%d degree=%d\n", sidx, selectedNode->index, selectedNode->degree );
+           // printf( "debug: selected node %d=%d degree=%d\n", sidx, selectedNode->index, selectedNode->degree );
 
             removeSubGraph( g, candidate, selectedNode );
 
@@ -311,28 +196,25 @@ boruvka( graph_t* g ) {
             if( !computeMinEdge( g, snode, &from, &to, &weight ) ) continue;
 
             // This edge is part of the minimum spanning tree
-            totalWeight += weight;
-            printf( "(%d)-(%d) with weight %f\n", from, to, weight );
+            //totalWeight += weight;
+            //printf( "(%d)-(%d) with weight %f\n", from, to, weight );
+            edge_t e = { .from = from, .to = to, .weight =weight };
+            edgelist[numedges++] =e;
 
             node_t* dnode =g->nodePtr[to];
             assert( dnode->index == to );
 
             // Contract the source node with the destination node of the edge
             contractNodes( g, snode, dnode );
-            //cnode->level =level+1;
         }
 
-        /*printf ("DEBUG\n-----\n");
-        graph_dump( g );*/
-
-        /*printSuperNodes( g );
-        char c;
+//        printSuperNodes( g );
+        /*char c;
         scanf ( "%c", &c );*/
 
     }
 
-    printf( "Total weight: %f\n", totalWeight );
-    return 0;
+    return numedges;
 }
 
 int
@@ -348,14 +230,37 @@ main( int argc, const char** argv ) {
         fprintf( stderr, "(e) Could not load graph market file `%s'\n", argv[1] );
         return -1;
     }
-    
-   // graph_dump( &g );
 
-    boruvka( &g );
-   // graph_dump( &g );
+    edge_t *edgelist = calloc( g.m, sizeof(edge_t) );
     
+    //graph_dump( &g );
+
+    int numedges = boruvka( &g, (idx_t *)edgelist );
+   // graph_dump( &g );
+  
+    // We now need to spit the raw list of edges into different subgraphs, if any
+    // Unfortunately this requires us to traverse through the list of edges repeatedly
+
+    int sgraphs =0;
+    for( int i=0; i < g.m; i++ ) {
+        node_t* first_node =g.nodePtr[i];
+        if( first_node->first != i ) continue; // Not a first node 
+
+        printf( "MSP for subgraph #%d:\n", sgraphs++ );
+
+        float totalweight =0.f;
+
+        for( int j=0; j < numedges; j++ ) {
+            node_t* n =g.nodePtr[edgelist[j].from];
+            if( n->first != i ) continue; // This edge is not part of the subgraph
+            printf( "(%d)->(%d) ", edgelist[j].from, edgelist[j].to );
+            totalweight += edgelist[j].weight;
+        }
+        printf( "\n[%d] Total weight: %f\n", sgraphs, totalweight );
+    }
 
     graph_free( &g );
+    free( edgelist );
 
     return 0;
 }
