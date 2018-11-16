@@ -1,6 +1,6 @@
 # General flags
 CC = mpicc
-CFLAGS = -Wall -std=c99 -O0 -g 
+CFLAGS = -Wall -std=c99 -O3 -g -fopenmp
 LDFLAGS = -lm
 
 BIN = build/moravia
