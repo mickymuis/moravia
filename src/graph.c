@@ -64,20 +64,18 @@ read_matrix_market2(const char *filename, graph_t* g )
         return false;
     }
 
+    g->size =0;
     g->m =M;
     g->nodePtr = calloc( M, sizeof( node_t ) );
-    g->dataPtr = calloc( M, sizeof( nodedata_t ) );
+
 
     for( int i =0; i < M; i++ ) {
         node_t* n =&g->nodePtr[i];
-        nodedata_t* d =&g->dataPtr[i];
-        n->index =i;
-        n->first =i; n->next =-1;
-        n->level =0;
         // We use the fact that calloc lazily allocates this memory
-        d->size =bs; d->degree =0;
-        d->edges = calloc( bs, sizeof(idx_t) );
-        d->weights=calloc( bs, sizeof(double) );
+        n->size =bs; n->degree =0;
+        n->index =i;
+        n->edges = calloc( bs, sizeof(idx_t) );
+        n->weights=calloc( bs, sizeof(float) );
     }
 
     for (int i = 0; i < size; i++)
@@ -98,36 +96,36 @@ read_matrix_market2(const char *filename, graph_t* g )
 
         //if( val == 0.0 ) continue;
 
-        bool swap =false;
-        nodedata_t* d;
+        bool swap =true;
+        node_t* n;
 L0:
         if( row == col ) continue;
 
 //        if( (swap ? col : row ) < (swap ? row : col) ) {
-            d =&g->dataPtr[ swap ? col : row ];
-            if( d->degree >= d->size ) {
-                d->size += bs;
-                d->edges =realloc( d->edges, d->size * sizeof(idx_t) ); 
-                d->weights =realloc( d->weights, d->size * sizeof(double) ); 
+            n =&g->nodePtr[ swap ? col : row ];
+            if( n->degree >= n->size ) {
+                n->size += bs;
+                n->edges =realloc( n->edges, n->size * sizeof(idx_t) ); 
+                n->weights =realloc( n->weights, n->size * sizeof(float) ); 
             }
-            d->edges[d->degree]   = swap ? row : col;
-            d->weights[d->degree] = val;
-            d->degree++;
+            n->edges[n->degree]   = swap ? row : col;
+            n->weights[n->degree] = val;
+            n->degree++;
             g->size++;
 //        }
 
-        if (mm_is_symmetric(matcode) && row != col && !swap ) {
+/*        if (mm_is_symmetric(matcode) && row != col && !swap ) {
             swap =true;
             goto L0;
-        }
+        }*/
     }
 
     fclose(fh);
     for( int i =0; i < M; i++ ) {
-        nodedata_t* d =&g->dataPtr[i];
-        d->size =d->degree;
-        d->edges = realloc( d->edges,   d->degree * sizeof(idx_t) );
-        d->weights=realloc( d->weights, d->degree * sizeof(double) );
+        node_t* n =&g->nodePtr[i];
+        n->size =n->degree;
+        n->edges = realloc( n->edges,   n->degree * sizeof(idx_t) );
+        n->weights=realloc( n->weights, n->degree * sizeof(float) );
     }
 
     return true;
@@ -269,10 +267,10 @@ graph_dump( const graph_t* mat ) {
     for (int i = 0; i < mat->m; ++i)
     {
         if( mat->nodePtr[i].index != i ) continue; // contracted node
-        nodedata_t* d =&mat->dataPtr[i];
-        for (idx_t idx =0; idx < d->size; ++idx)
+        node_t* n =&mat->nodePtr[i];
+        for (idx_t idx =0; idx < n->size; ++idx)
         {
-            printf("(%d)->(%d) weight %f\n", i, d->edges[idx], d->weights[idx] );
+            printf("(%d)->(%d) weight %f\n", i, n->edges[idx], n->weights[idx] );
         }
     }
 }
@@ -303,10 +301,9 @@ graph_loadMM(const char *filename, graph_t *mat ) {
 void
 graph_free( graph_t* mat ) {
     for( size_t i =0; i < mat->m; i++ ) {
-        free( mat->dataPtr[i].weights );
-        free( mat->dataPtr[i].edges );
+        free( mat->nodePtr[i].weights );
+        free( mat->nodePtr[i].edges );
     }
     free( mat->nodePtr );
-    free( mat->dataPtr );
 }
 

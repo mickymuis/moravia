@@ -14,27 +14,45 @@ typedef SSIZE_T ssize_t;
 
 typedef int32_t idx_t;  // Type large enough to hold an arbitrary index 
 
+
 typedef struct {
-    idx_t    index;     // Index of the node
-    int      level;     // Used internally by the Boruvka algorithm
-    idx_t    first;
-    idx_t    next;
+    idx_t from, to;
+} edge_t;
+
+typedef struct {
+    idx_t from, to, hindex;
+    float weight;
+} cedge_t;
+
+typedef struct {
+    idx_t    index;       // Index of the hypergraph
+    edge_t*  edges;       // Pointer to an array of edges
+    double   totalweight; // Total weight of the hypergraph
+    uint32_t n;           // Number of edges
+    uint32_t capacity;    // Capacity of the array
+} stree_t;
+
+typedef struct {
+    uint32_t size;        // Size of the array
+    uint32_t degree;      // Number of outgoing edges
+    idx_t*   edges;       // Array of node indices denoting an edge destination
+    float*  weights;     // Matching array of weights
+    idx_t    index;       // Index in the array
 } node_t;
 
 typedef struct {
-    uint32_t size;      // Size of the array
-    uint32_t degree;
-    idx_t*   edges;     // Array of node indices denoting an edge destination
-    double*   weights;   // Matching array of weights
-
-} nodedata_t;
+    node_t* nodePtr;      // Pointer to an array of nodes
+    uint32_t m;           // Number of nodes
+    uint32_t size;        // Total number of stored weights/indices
+} graph_t;
 
 typedef struct {
-    node_t* nodePtr;
-    nodedata_t* dataPtr;
-    uint32_t m;         // Number of nodes
-    uint32_t size;      // Total number of stored weights/indices
-} graph_t;
+    stree_t* treePtr;     // Pointer to an array of mst nodes
+    uint32_t n;           // Total number of subtrees
+    uint32_t m;           // Number of nodes in the graph
+    idx_t* hnode;         // Hypernode index for each graph node
+    uint32_t capacity;    // Capacity of the array
+} mst_t;
 
 void graph_dump( const graph_t* mat );
 
