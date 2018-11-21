@@ -96,7 +96,7 @@ read_matrix_market2(const char *filename, graph_t* g )
 
         //if( val == 0.0 ) continue;
 
-        bool swap =true;
+        bool swap =false;
         node_t* n;
 L0:
         if( row == col ) continue;
@@ -114,10 +114,10 @@ L0:
             g->size++;
 //        }
 
-/*        if (mm_is_symmetric(matcode) && row != col && !swap ) {
+        if (mm_is_symmetric(matcode) && row != col && !swap ) {
             swap =true;
             goto L0;
-        }*/
+        }
     }
 
     fclose(fh);

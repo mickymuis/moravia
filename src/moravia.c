@@ -98,8 +98,8 @@ contractNodes( mst_t* m, stree_t* t1, stree_t* t2, cedge_t* edge ) {
     if( t1->index == t2->index ) return -1;
 
     if( t1->capacity < (t1->n + t2->n + 1) ) {
-        t1->edges = realloc( t1->edges, (t1->capacity + t2->n + 1) * sizeof(edge_t) );
-        t1->capacity += t2->n + 1;
+        t1->edges = realloc( t1->edges, (t1->capacity + t2->n + 128) * sizeof(edge_t) );
+        t1->capacity += t2->n + 128;
         assert( t1->edges != NULL );
     }
 
@@ -120,6 +120,7 @@ contractNodes( mst_t* m, stree_t* t1, stree_t* t2, cedge_t* edge ) {
    
     m->hnode[edge->from] = t1->index;
     m->hnode[edge->to] = t1->index;
+//#pragma omp parallel for
     for( int i =0; i < t2->n; i++ ) {
         m->hnode[t2->edges[i].from] = t1->index;
         m->hnode[t2->edges[i].to] = t1->index;
@@ -135,11 +136,12 @@ contractNodes( mst_t* m, stree_t* t1, stree_t* t2, cedge_t* edge ) {
 }
 
 bool
-computeBestEdge( graph_t* g, mst_t* m, node_t* n, cedge_t bestedge[] ) {
+computeBestEdge( const graph_t* g, const mst_t* m, const node_t* n, cedge_t bestedge[] ) {
     
     //node_t *ptr =&g->nodePtr[node->first];
     idx_t hindex =m->hnode[n->index];
     cedge_t *be = &bestedge[hindex];
+    if( be->from == -2 ) return true;
     if( be->from == -1 ) be->weight = INFINITY;
 
     for( int i =0; i < n->size; i++ ) {
@@ -147,13 +149,13 @@ computeBestEdge( graph_t* g, mst_t* m, node_t* n, cedge_t bestedge[] ) {
         if( hindex2 == hindex ) continue;
         
         if( n->weights[i] < be->weight ) {
-            // END
             be->weight = n->weights[i];
             be->from = n->index;
             be->to = n->edges[i];
         }
 
         cedge_t *be2 =&bestedge[hindex2];
+        if( be2->from == -2 ) continue;
         if( be2->from == -1 ) be2->weight = INFINITY;
         if( n->weights[i] < be2->weight ) {
             be2->weight = n->weights[i];
@@ -177,130 +179,106 @@ selectStartNode( const graph_t* g, bool nodes[] ) {
     return -1;
 }
 
-void
-makePartition( const graph_t* g, bool nodes[], nodeset_t* pre, nodeset_t* candidate, nodeset_t* post ) {
-    nodeset_t* inset[2] = { pre, candidate };
-    nodeset_t* outset[2]= { candidate, post };
-    candidate->count = post->count =0;
+inline void
+makePartition( const graph_t* g, bool nodes[], nodeset_t* in, nodeset_t* out ) {
+    out->count =0;
 
-    for( int s =0; s < 2; s++ ) {
-        outset[s]->count =0;
-        for( int i =0; i < inset[s]->count; i++ ) {
-            node_t* n =&g->nodePtr[inset[s]->idxPtr[i]];
-            for( int j =0; j < n->size; j++ ) {
-                idx_t idx =n->edges[j];
-                if( nodes[idx] == false ) continue;
-                
-                nodeset_append( outset[s], idx );
-                nodes[idx] = false;
-            }
+    for( int i =0; i < in->count; i++ ) {
+        node_t* n =&g->nodePtr[in->idxPtr[i]];
+        for( int j =0; j < n->size; j++ ) {
+            idx_t idx =n->edges[j];
+            if( nodes[idx] == false ) continue;
+            
+            nodeset_append( out, idx );
+            nodes[idx] = false;
         }
     }
 }
 
-int
-boruvka3( graph_t* g, mst_t *m  ) {
-
-    /* 
-     * (1) Setup the partitions
-     */
-    const int bs =128;
-    const int np =16;
-    const int psize =g->m / 16;
-
-    /*edgelist_t cedges[16];
-    for( int i=0; i < np; i++ )
-        edgelist_make( &cedges[i], bs );
-*/
-    /*
-     * (2) Setup the mst_t data structure
-     */
-    m->n = m->m =g->m;
-    m->hnode = calloc( m->m, sizeof(idx_t) );
-    m->treePtr = calloc( m->m, sizeof(stree_t) );
-    for( int i=0; i < m->m; i++ ) {
-        m->hnode[i] =i;
-        stree_t* t =&m->treePtr[i];
-        t->index =i;
-        t->n =0;
-        t->capacity =1;
-        t->edges = calloc( 1, sizeof(edge_t) );
+void
+computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool all ) {
+    
+    cedge_t *bestedge = calloc( g->m, sizeof(cedge_t) );
+    memset( bestedge, -1, g->m * sizeof(cedge_t) );
+    int hbegin =0, hend = g->m;
+    // Given the partitions which we need to process, 
+    // we need to exclude certain components from being computed
+    if( !all ) {
+        for( int i=0; i < partition[0].count; i++ ) {
+            bestedge[m->hnode[partition[0].idxPtr[i]]].from =-2;
+            hbegin =fminf( hbegin, m->hnode[partition[0].idxPtr[i]] );
+        }
+        for( int i=0; i < partition[nparts-1].count; i++ ) {
+            bestedge[m->hnode[partition[nparts-1].idxPtr[i]]].from =-2;
+            hend =fmaxf( hend, m->hnode[partition[nparts-1].idxPtr[i]] );
+        }
     }
 
-    /*
-     * (3) Do stuff
-     */
-
-    cedge_t *bestedge = calloc( g->m, sizeof(cedge_t) );
-    
-    /*edgelist_t bestedge;
-    edgelist_make( &bestedge, 128 );*/
-
     while( 1 ) {
-        memset( bestedge, -1, g->m * sizeof(cedge_t) );
-        edgelist_clear( &bestedge );
-        
-        printf( "Computing best edges...\n" );
+       
+        if( all ) printf( "Computing best edges...\n" );
 
         // Process the nodes from each partition by finding their minimum edges
-//#pragma omp parallel for
+        for( int p =0; p < nparts; p++ ) {
+           // printf( "%d ", p );
+            for( int i =0; i < partition[p].count ; i++ ) {
+                node_t *n = &g->nodePtr[partition[p].idxPtr[i]];
+                
+                computeBestEdge( g, m, n, bestedge );
 
-    /*    for( int i =0; i < g->m; i++ ) {
-            computeBestEdge( g, m, &g->nodePtr[i], bestedge );
-        }*/
-
-        for( int p =0; p < np; p++ ) {
-            int ps =psize;
-            if( p == 0 ) ps + g->m % np;
-            for( int i= p*psize; i < p*psize + ps; i++ ) {
-                computeBestEdge( g, m, &g->nodePtr[i], bestedge );
+               // printf( "Partition %d: (%d)->(%d)\n", p, from, to );
             }
         }
 
         int mops =0, calls =0;
 
-        printf( "Merging nodes ... \n" );
+        if( all ) printf( "Merging nodes ... \n" );
 
         // Merge the nodes that were selected by the previous step
-        for( int i =0; i < g->m; i++ ) {
-            if( bestedge[i].from == -1 ) continue;
+        for( int i =hbegin; i < hend; i++ ) {
+            if( bestedge[i].from < 0 ) continue;
             // This edge is part of the minimum spanning tree
             cedge_t *e =&bestedge[i];
-     //       printf( "Best edge for component [%d]: (%d)-(%d) with weight %f\n", m->hnode[e.from], e.from, e.to, e.weight );
-            
-            stree_t* t1 =&m->treePtr[m->hnode[e->from]];
-            stree_t* t2 =&m->treePtr[m->hnode[e->to]];
+
+            idx_t h1 = m->hnode[e->from];
+            idx_t h2 = m->hnode[e->to];
+
+            stree_t* t1 =&m->treePtr[h1];
+            stree_t* t2 =&m->treePtr[h2];
             
             // Contract the source node with the destination node of the edge
             int l = contractNodes( m, t1, t2, e );
             if( l != -1 ) {
                 mops++;
             }
+            if( bestedge[h2].from == -2 ) {
+                bestedge[h1].from = -2;
+                e->from =-2;
+            }
+            else e->from =-1;
             calls++;
         }
-        printf( "Merged %d nodes with %d calls.\n", mops, calls );
+        /*if( all )*/ printf( "Merged %d nodes with %d calls.\n", mops, calls );
         // No nodes were contracted?
         if( !mops ) break;
     }
+    free( bestedge );
 
-    return 0;
 }
 
-#if 0
 int
-boruvka2( graph_t* g, mst_t *m  ) {
+boruvka4( graph_t* g, mst_t *m  ) {
 
     /* 
      * (1) Setup the partitions
      */
-    const int bs =128;
-    int np =bs;  // Number of allocated partitions
-    int ns =0;          // Actual number of partitions
-    nodeset_t* separator = calloc( np, sizeof(nodeset_t) );
-    nodeset_t* candidate = calloc( np, sizeof(nodeset_t) );
-    for( int i=0; i < np; i++ ) {
-        nodeset_make( &separator[i], bs );
-        nodeset_make( &candidate[i], bs );
+    const int procs =16;// Number of processes
+    const int bs =1024; // Block size for pre-allocating
+    int cparts =bs;     // Number of allocated partitions
+    int nparts =0;      // Actual number of partitions
+    nodeset_t* partition = calloc( cparts, sizeof(nodeset_t) );
+    for( int i=0; i < cparts; i++ ) {
+        nodeset_make( &partition[i], bs );
     }
     nodeset_t s0;
     nodeset_make( &s0, 1 );
@@ -310,7 +288,7 @@ boruvka2( graph_t* g, mst_t *m  ) {
     memset( nodes, true, g->m*sizeof(bool) );
     
     // Create up to np partitions
-    nodeset_t *pre, *cand, *post;
+    nodeset_t *in, *out;
     
     // Pick the first node from which we build the set of partitions
 PICK:
@@ -319,46 +297,39 @@ PICK:
 //    printf( "Picking %d\n", start );
     if( start != -1 ) {
         s0.idxPtr[0] =start;
-        pre =&s0;
-
+        in =&s0;
 
         while( 1 ) {
-            cand = &candidate[ns];
-            post = &separator[ns];
+            out = &partition[nparts];
 
-            makePartition( g, nodes, pre, cand, post );
-            if( pre == &s0 ) {
-                candidate[ns].idxPtr[candidate[ns].count++] =s0.idxPtr[0];
+            makePartition( g, nodes, in, out );
+            if( in == &s0 ) {
+                nodeset_append( out, s0.idxPtr[0] );
             }
-            if( cand->count == 0 ) {
+            if( out->count == 0 ) {
                 goto PICK;
             }
-            /*printf( "PARTITION #%d\n------------\n", ns );
-            printf( "candidates " ); nodeset_print( cand );
-            printf( "separator  " ); nodeset_print( post );*/
-            ns++;
+            /*printf( "PARTITION #%d\n------------\n", nparts );
+            nodeset_print( out );*/
+            nparts++;
 
-            if( ns == np ) {
-                candidate =realloc( candidate, (np+bs) * sizeof(nodeset_t) );
-                separator =realloc( separator, (np+bs) * sizeof(nodeset_t) );
-                for( int i =ns; i < ns+bs; i++ ) {
-                    nodeset_make( &candidate[i], bs );
-                    nodeset_make( &separator[i], bs );
+            if( nparts == cparts ) {
+                partition =realloc( partition, (cparts+bs) * sizeof(nodeset_t) );
+                for( int i =nparts; i < nparts+bs; i++ ) {
+                    nodeset_make( &partition[i], bs );
                 }
-                np+=bs;
+                cparts+=bs;
             }
-            pre =&separator[ns-1];
+            in =&partition[nparts-1];
         }
     }
 
-    assert( ns < np );
-
     // No partitions could be made for the given s0
-    if( ns == 0 ) { 
+    if( nparts == 0 ) { 
         printf( "Could not make any partition for the given start node\n" );
-        return;
+        return -1;
     }
-    printf( "Created %d partitions \n", ns );
+    printf( "Created %d partitions \n", nparts );
     free( nodes );
 
     /*
@@ -377,79 +348,42 @@ PICK:
     }
 
     /*
-     * (3) Do stuff
+     * (3) Distribute the partitions to different nodes
      */
 
-    cedge_t *bestedge = calloc( g->m, sizeof(cedge_t) );
-    
-    while( 1 ) {
-        memset( bestedge, -1, g->m * sizeof(cedge_t) );
-        
-        printf( "Computing best edges...\n" );
-
-        // Process the nodes from each partition by finding their minimum edges
+    int nparts_div = (nparts/procs) * procs;
+    for( int np =procs; np > 0; np = np/2 ) {
+    int ppn = nparts_div / np; // Part per node
 //#pragma omp parallel for
-        for( int p =0; p < ns; p++ ) {
-           // printf( "%d ", p );
-            for( int i =0; i < candidate[p].count; i++ ) {
-                node_t *n = &g->nodePtr[candidate[p].idxPtr[i]];
-                
-                computeBestEdge( g, m, n, bestedge );
-
-               // printf( "Partition %d: (%d)->(%d)\n", p, from, to );
-            }
-            for( int i =0; i < separator[p].count; i++ ) {
-                node_t *n = &g->nodePtr[separator[p].idxPtr[i]];
-                
-                computeBestEdge( g, m, n, bestedge );
-
-               // printf( "Partition %d: (%d)->(%d)\n", p, from, to );
-            }
+        for( int p=0; p < np; p++ ) {
+            int begin = p*ppn;
+            int end = (p+1)*ppn;
+            if( p==np-1 ) end = nparts;
+            int n = end - begin;
+            if( n<=0 ) continue;
+            printf( "[np=%d] Computing parts %d - %d...\n", np, begin, p*ppn + n );
+            computeMST( g, m, &partition[begin], n, np==1?true:false );
         }
-
-        /*for( int i =0; i < g->m; i++ ) {
-            computeBestEdge( g, m, &g->nodePtr[i], bestedge );
-        }*/
-
-        int mops =0, calls =0;
-
-        printf( "Merging nodes ... \n" );
-
-        // Merge the nodes that were selected by the previous step
-        for( int i =0; i < g->m; i++ ) {
-            if( bestedge[i].from == -1 ) continue;
-            // This edge is part of the minimum spanning tree
-            cedge_t e =bestedge[i];
-     //       printf( "Best edge for component [%d]: (%d)-(%d) with weight %f\n", m->hnode[e.from], e.from, e.to, e.weight );
-            
-            stree_t* t1 =&m->treePtr[m->hnode[e.from]];
-            stree_t* t2 =&m->treePtr[m->hnode[e.to]];
-            
-            // Contract the source node with the destination node of the edge
-            int l = contractNodes( m, t1, t2, &e );
-            if( l != -1 ) {
-                mops++;
-            }
-            calls++;
-        }
-        printf( "Merged %d nodes with %d calls.\n", mops, calls );
-        // No nodes were contracted?
-        if( !mops ) break;
     }
 
-    for( int i=0; i < np; i++ ) {
-        nodeset_free( &separator[i] );
-        nodeset_free( &candidate[i] );
-//        free( edges[i] );
+    /*
+     * (4) Finish the MST on a single node
+     */
+
+    //printf( "Computing from all parts...\n" );
+    //computeMST( g, m, partition, nparts, true );
+
+    /*
+     * (5) Clean up
+     */
+    for( int i=0; i < cparts; i++ ) {
+        nodeset_free( &partition[i] );
     }
     nodeset_free( &s0 );
-    free( candidate );
-    free( separator );
-    //free( nodes );
-    free( bestedge );
+    free( partition );
     return 0;
 }
-#endif
+
 
 int
 main( int argc, const char** argv ) {
@@ -468,7 +402,7 @@ main( int argc, const char** argv ) {
     mst_t mst;
 
     printf( "Computing MST ... " );
-    int numedges =boruvka3( &g, &mst );
+    int numedges =boruvka4( &g, &mst );
     printf( "done" );
 
    // graph_dump( &g );
