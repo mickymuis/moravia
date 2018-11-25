@@ -50,8 +50,10 @@ typedef struct {
     stree_t* treePtr;     // Pointer to an array of mst nodes
     uint32_t n;           // Total number of subtrees
     uint32_t m;           // Number of nodes in the graph
-    idx_t* hnode;         // Hypernode index for each graph node
-    uint32_t capacity;    // Capacity of the array
+    idx_t* hindex;        // Hypernode index for each graph node
+    edge_t* edgePtr;      // Buffer that stores all currently processed edges
+    uint32_t nedges;      // Number of edges so far
+    uint32_t capacity;    // Capacity of the arrays
 } mst_t;
 
 void graph_dump( const graph_t* mat );

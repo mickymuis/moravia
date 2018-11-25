@@ -1,10 +1,12 @@
 #include "graph.h"
+#include "timing.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include <math.h>
 #include <limits.h>
 #include <string.h>
 #include <assert.h>
+#include <time.h>
 
 
 typedef struct {
@@ -85,19 +87,48 @@ edgelist_geth( edgelist_t* el, idx_t hindex ) {
     return edgelist_append( el, e );
 }
 
+idx_t
+computeHIndex( const mst_t *m, idx_t nidx ) {
+    idx_t i =nidx;
+    while( m->hindex[i] != i )
+        i = m->hindex[i];
+    return i;
+}
+
+void
+flattenHIndex( mst_t *m ) {
+    idx_t *queue = calloc( m->m, sizeof(idx_t) );
+    bool *flat = calloc( m->m, sizeof(bool) );
+    idx_t n=0;
+
+    for( idx_t i=0; i < m->m; i++ ) {
+        if( flat[i] ) continue;
+        n =0;
+        idx_t j =i;
+        while( j != m->hindex[j] ) {
+            flat[j] =true;
+            queue[n++] =j;
+            j = m->hindex[j];
+        }
+        for( idx_t k =0; k < n; k++ ) {
+            m->hindex[queue[k]] =j;
+        }
+    }
+    free( flat );
+    free( queue );
+}
+
 /** Compute the contracted node from @n1 and @n2 by 
- *  merging their supernode pointer chains together.
- *  The level of all nodes in the chain is set to the highest level + 1
  */
 int
 contractNodes( mst_t* m, stree_t* t1, stree_t* t2, cedge_t* edge ) {
 
-    if( !( t1->edges && t2->edges ) ) return -1;
+//    if( !( t1->edges && t2->edges ) ) return -1;
 
     //printf( "Merging component [%d] with [%d]\n", t1->index, t2->index );
     if( t1->index == t2->index ) return -1;
 
-    if( t1->capacity < (t1->n + t2->n + 1) ) {
+   /* if( t1->capacity < (t1->n + t2->n + 1) ) {
         t1->edges = realloc( t1->edges, (t1->capacity + t2->n + 128) * sizeof(edge_t) );
         t1->capacity += t2->n + 128;
         assert( t1->edges != NULL );
@@ -109,29 +140,34 @@ contractNodes( mst_t* m, stree_t* t1, stree_t* t2, cedge_t* edge ) {
     }
 
     t1->edges[t1->n].from = edge->from;
-    t1->edges[t1->n++].to = edge->to;
+    t1->edges[t1->n++].to = edge->to;*/
+
+    edge_t e = { edge->from, edge->to };
+
     t1->totalweight += t2->totalweight + edge->weight;
+    m->edgePtr[m->nedges++] =e;
+    t1->n += t2->n + 1;
+    t2->n =0; t2->totalweight =0.0;
 
 //#pragma omp parallel for
  /*   for( int i =0; i < m->m; i++ ) {
-        if( m->hnode[i] == t2->index ) m->hnode[i] = t1->index;
-      //  printf( "%d ", m->hnode[i] );
+        if( m->hindex[i] == t2->index ) m->hindex[i] = t1->index;
+      //  printf( "%d ", m->hindex[i] );
     }*/
    
-    m->hnode[edge->from] = t1->index;
-    m->hnode[edge->to] = t1->index;
+    m->hindex[edge->from] = t1->index;
+    m->hindex[edge->to] = t1->index;
+    m->hindex[t2->index] = t1->index;
 //#pragma omp parallel for
-    for( int i =0; i < t2->n; i++ ) {
-        m->hnode[t2->edges[i].from] = t1->index;
-        m->hnode[t2->edges[i].to] = t1->index;
+    /*for( int i =0; i < t2->n; i++ ) {
+        m->hindex[t2->edges[i].from] = t1->index;
+        m->hindex[t2->edges[i].to] = t1->index;
     }
-    //printf( "\n" );
     
     free( t2->edges );
     t2->edges =NULL;
     t2->capacity =0;
-    t2->n =0;
-    //printf( "." );
+    t2->n =0;*/
     return 0;
 }
 
@@ -139,13 +175,15 @@ bool
 computeBestEdge( const graph_t* g, const mst_t* m, const node_t* n, cedge_t bestedge[] ) {
     
     //node_t *ptr =&g->nodePtr[node->first];
-    idx_t hindex =m->hnode[n->index];
+    //idx_t hindex =m->hindex[n->index];
+    idx_t hindex =computeHIndex( m, n->index );
     cedge_t *be = &bestedge[hindex];
     if( be->from == -2 ) return true;
     if( be->from == -1 ) be->weight = INFINITY;
 
     for( int i =0; i < n->size; i++ ) {
-        idx_t hindex2 =m->hnode[n->edges[i]];
+        //idx_t hindex2 =m->hindex[n->edges[i]];
+        idx_t hindex2 =computeHIndex( m, n->edges[i] );
         if( hindex2 == hindex ) continue;
         
         if( n->weights[i] < be->weight ) {
@@ -205,12 +243,12 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool a
     // we need to exclude certain components from being computed
     if( !all ) {
         for( int i=0; i < partition[0].count; i++ ) {
-            bestedge[m->hnode[partition[0].idxPtr[i]]].from =-2;
-            hbegin =fminf( hbegin, m->hnode[partition[0].idxPtr[i]] );
+            bestedge[m->hindex[partition[0].idxPtr[i]]].from =-2;
+            hbegin =fminf( hbegin, m->hindex[partition[0].idxPtr[i]] );
         }
         for( int i=0; i < partition[nparts-1].count; i++ ) {
-            bestedge[m->hnode[partition[nparts-1].idxPtr[i]]].from =-2;
-            hend =fmaxf( hend, m->hnode[partition[nparts-1].idxPtr[i]] );
+            bestedge[m->hindex[partition[nparts-1].idxPtr[i]]].from =-2;
+            hend =fmaxf( hend, m->hindex[partition[nparts-1].idxPtr[i]] );
         }
     }
 
@@ -240,8 +278,10 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool a
             // This edge is part of the minimum spanning tree
             cedge_t *e =&bestedge[i];
 
-            idx_t h1 = m->hnode[e->from];
-            idx_t h2 = m->hnode[e->to];
+            /*idx_t h1 = m->hindex[e->from];
+            idx_t h2 = m->hindex[e->to];*/
+            idx_t h1 = computeHIndex( m, e->from );
+            idx_t h2 = computeHIndex( m, e->to );
 
             stree_t* t1 =&m->treePtr[h1];
             stree_t* t2 =&m->treePtr[h2];
@@ -260,6 +300,9 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool a
         }
         /*if( all )*/ printf( "Merged %d nodes with %d calls.\n", mops, calls );
         // No nodes were contracted?
+        
+        flattenHIndex( m );
+
         if( !mops ) break;
     }
     free( bestedge );
@@ -336,10 +379,11 @@ PICK:
      * (2) Setup the mst_t data structure
      */
     m->n = m->m =g->m;
-    m->hnode = calloc( m->m, sizeof(idx_t) );
+    m->hindex = calloc( m->m, sizeof(idx_t) );
+    m->edgePtr = calloc( m->m, sizeof(edge_t) );
     m->treePtr = calloc( m->m, sizeof(stree_t) );
     for( int i=0; i < m->m; i++ ) {
-        m->hnode[i] =i;
+        m->hindex[i] =i;
         stree_t* t =&m->treePtr[i];
         t->index =i;
         t->n =0;
@@ -351,10 +395,10 @@ PICK:
      * (3) Distribute the partitions to different nodes
      */
 
-    int nparts_div = (nparts/procs) * procs;
+ /*   int nparts_div = (nparts/procs) * procs;
     for( int np =procs; np > 0; np = np/2 ) {
     int ppn = nparts_div / np; // Part per node
-//#pragma omp parallel for
+#pragma omp parallel for
         for( int p=0; p < np; p++ ) {
             int begin = p*ppn;
             int end = (p+1)*ppn;
@@ -364,14 +408,14 @@ PICK:
             printf( "[np=%d] Computing parts %d - %d...\n", np, begin, p*ppn + n );
             computeMST( g, m, &partition[begin], n, np==1?true:false );
         }
-    }
+    }*/
 
     /*
      * (4) Finish the MST on a single node
      */
 
-    //printf( "Computing from all parts...\n" );
-    //computeMST( g, m, partition, nparts, true );
+    printf( "Computing from all parts...\n" );
+    computeMST( g, m, partition, nparts, true );
 
     /*
      * (5) Clean up
@@ -394,16 +438,28 @@ main( int argc, const char** argv ) {
     }
     graph_t g;
 
+    struct timespec start_time, end_time;
+    get_time( &start_time );
+
     if( !graph_loadMM( argv[1], &g ) ) {
         fprintf( stderr, "(e) Could not load matrix market file `%s'\n", argv[1] );
         return -1;
     }
 
+    get_time( &end_time );
+    print_elapsed_time( "(t) Load matrix market", &end_time, &start_time );
+
     mst_t mst;
+
+    get_time( &start_time );
 
     printf( "Computing MST ... " );
     int numedges =boruvka4( &g, &mst );
     printf( "done" );
+    
+    get_time( &end_time );
+    print_elapsed_time( "(t) Compute MST", &end_time, &start_time );
+    
 
    // graph_dump( &g );
   
@@ -411,7 +467,7 @@ main( int argc, const char** argv ) {
 
     for( int i=0; i < mst.m; i++ ) {
         stree_t *t =&mst.treePtr[i];
-        if( t->edges != NULL ) {
+        if( t->n != 0 ) {
                 for( int j =0; j < t->n; j++ ) {
                 }
                 printf( "[%d] %d edges, total weight %f\n", ++sgraphs, t->n, t->totalweight );

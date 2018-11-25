@@ -1,13 +1,13 @@
 # General flags
 CC = mpicc
-CFLAGS = -Wall -std=c99 -O3 -g -fopenmp
+CFLAGS = -Wall -O3 -g -fopenmp
 LDFLAGS = -lm
 
 BIN = build/moravia
 
-OBJS = build/moravia.o build/mmio.o build/graph.o
-HEADERS = src/mmio.h src/graph.h
-SOURCES = src/moravia.c src/matrix.c mmio.c 
+OBJS = build/moravia.o build/mmio.o build/graph.o build/timing.o
+HEADERS = src/mmio.h src/graph.h src/timing.h
+SOURCES = src/moravia.c src/matrix.c src/mmio.c src/timing.c
 
 all:		$(BIN)
 
