@@ -5,7 +5,7 @@ LDFLAGS = -lm
 
 BIN = build/moravia
 
-OBJS = build/moravia.o build/mmio.o build/graph.o build/mst.o src/nodeset.o
+OBJS = build/moravia.o build/mmio.o build/graph.o build/mst.o build/nodeset.o
 HEADERS = src/mmio.h src/graph.h src/mst.h src/nodeset.h
 SOURCES = src/moravia.c src/matrix.c src/mmio.c src/mst.c src/nodeset.c
 
