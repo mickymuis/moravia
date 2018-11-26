@@ -41,7 +41,7 @@ read_matrix_market2(const char *filename, graph_t* g )
         return false;
     }
 
-    printf("Reading graph '%s'...\n", filename);
+    //printf("Reading graph '%s'...\n", filename);
 
     MM_typecode matcode;
     if (mm_read_banner(fh, &matcode) != 0)
@@ -142,7 +142,7 @@ read_matrix_market(const char *filename,
         return false;
     }
 
-    printf("Reading graph '%s'...\n", filename);
+    //printf("Reading graph '%s'...\n", filename);
 
     MM_typecode matcode;
     if (mm_read_banner(fh, &matcode) != 0)
@@ -292,8 +292,6 @@ graph_loadMM(const char *filename, graph_t *mat ) {
     if( !read_matrix_market2( filename, mat ) )
         return false;
 
-    printf("(i) Import ok: graph with %d nodes, %d data points\n",
-            mat->m, mat->size);
 
     return true;
 }

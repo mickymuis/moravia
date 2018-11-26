@@ -1,5 +1,6 @@
 #include "graph.h"
-#include "timing.h"
+#include "mst.h"
+#include "nodeset.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include <math.h>
@@ -7,183 +8,61 @@
 #include <string.h>
 #include <assert.h>
 #include <time.h>
-
-
-typedef struct {
-    idx_t* idxPtr;
-    unsigned int capacity;
-    unsigned int count;
-} nodeset_t;
+#include <stdarg.h>
+#include <mpi.h>
 
 void
-nodeset_make( nodeset_t* ns, unsigned int capacity ) {
-    ns->idxPtr =calloc( capacity, sizeof(idx_t) );
-    ns->capacity =capacity;
-    ns->count =0;
+rprintf( const char* fmt, ... ) {
+    va_list ap;
+    va_start(ap,fmt);
+    int pid;
+    MPI_Comm_rank( MPI_COMM_WORLD, &pid );
+
+    if( pid == 0 )
+        vprintf( fmt, ap ); 
+    va_end(ap);
 }
+
+/* Functions related to sending and received MST parts over MPI */
 
 void
-nodeset_free( nodeset_t* ns ) { 
-    free( ns->idxPtr );
+sendEdge( const cedge_t* edge, int pid, int dst_pid ) {
+
 }
 
-void
-nodeset_append( nodeset_t* ns, idx_t i ) {
-    if( ns->capacity == ns->count ) {
-        ns->idxPtr =realloc( ns->idxPtr, (ns->capacity+128) * sizeof(idx_t) );
-        ns->capacity +=128;
-    }
-    ns->idxPtr[ns->count++] = i;
-}
+/* Core functions for MST computation */
 
-void
-nodeset_print( nodeset_t* ns ) {
-    for( int i =0; i < ns->count; i++ )
-        printf( "(%d) ", ns->idxPtr[i] );
-    printf( "\n" );
-}
-
-typedef struct {
-    cedge_t *edgePtr;
-    int capacity;
-    int count;
-} edgelist_t;
-
-void
-edgelist_make( edgelist_t* el, unsigned int capacity ) {
-    el->edgePtr =calloc( capacity, sizeof(cedge_t) );
-    el->capacity =capacity;
-    el->count =0;
-}
-
-void
-edgelist_free( edgelist_t* el ) { 
-    free( el->edgePtr );
-}
-
-void
-edgelist_clear( edgelist_t* el ) {
-    el->count =0;
-}
-
-cedge_t*
-edgelist_append( edgelist_t* el, cedge_t e ) {
-    if( el->capacity == el->count ) {
-        el->edgePtr =realloc( el->edgePtr, (el->capacity+128) * sizeof(cedge_t) );
-        el->capacity +=128;
-    }
-    el->edgePtr[el->count++] = e;
-    return &el->edgePtr[el->count-1];
-}
-
-cedge_t*
-edgelist_geth( edgelist_t* el, idx_t hindex ) {
-    for( int i =0; i < el->count; i++ ) {
-        if( el->edgePtr[i].hindex == hindex ) {
-            return &el->edgePtr[i];
-        }
-    }
-    cedge_t e= { -1, -1, hindex, INFINITY };
-    return edgelist_append( el, e );
-}
-
-idx_t
-computeHIndex( const mst_t *m, idx_t nidx ) {
-    idx_t i =nidx;
-    while( m->hindex[i] != i )
-        i = m->hindex[i];
-    return i;
-}
-
-void
-flattenHIndex( mst_t *m ) {
-    idx_t *queue = calloc( m->m, sizeof(idx_t) );
-    bool *flat = calloc( m->m, sizeof(bool) );
-    idx_t n=0;
-
-    for( idx_t i=0; i < m->m; i++ ) {
-        if( flat[i] ) continue;
-        n =0;
-        idx_t j =i;
-        while( j != m->hindex[j] ) {
-            flat[j] =true;
-            queue[n++] =j;
-            j = m->hindex[j];
-        }
-        for( idx_t k =0; k < n; k++ ) {
-            m->hindex[queue[k]] =j;
-        }
-    }
-    free( flat );
-    free( queue );
-}
-
-/** Compute the contracted node from @n1 and @n2 by 
+/** Compute the contracted subtree from @t1 and @t2 by adding @edge to the list of MST edges. 
  */
 int
 contractNodes( mst_t* m, stree_t* t1, stree_t* t2, cedge_t* edge ) {
 
-//    if( !( t1->edges && t2->edges ) ) return -1;
-
-    //printf( "Merging component [%d] with [%d]\n", t1->index, t2->index );
     if( t1->index == t2->index ) return -1;
 
-   /* if( t1->capacity < (t1->n + t2->n + 1) ) {
-        t1->edges = realloc( t1->edges, (t1->capacity + t2->n + 128) * sizeof(edge_t) );
-        t1->capacity += t2->n + 128;
-        assert( t1->edges != NULL );
-    }
-
-    if( t2->n ) {
-        memcpy( &t1->edges[t1->n], t2->edges, t2->n * sizeof(edge_t) );
-        t1->n += t2->n;
-    }
-
-    t1->edges[t1->n].from = edge->from;
-    t1->edges[t1->n++].to = edge->to;*/
-
-    edge_t e = { edge->from, edge->to };
-
-    t1->totalweight += t2->totalweight + edge->weight;
-    m->edgePtr[m->nedges++] =e;
-    t1->n += t2->n + 1;
-    t2->n =0; t2->totalweight =0.0;
-
-//#pragma omp parallel for
- /*   for( int i =0; i < m->m; i++ ) {
-        if( m->hindex[i] == t2->index ) m->hindex[i] = t1->index;
-      //  printf( "%d ", m->hindex[i] );
-    }*/
+    edge->hindex =t1->index;
+    m->edgePtr[m->nedges++] =*edge;
    
     m->hindex[edge->from] = t1->index;
     m->hindex[edge->to] = t1->index;
     m->hindex[t2->index] = t1->index;
-//#pragma omp parallel for
-    /*for( int i =0; i < t2->n; i++ ) {
-        m->hindex[t2->edges[i].from] = t1->index;
-        m->hindex[t2->edges[i].to] = t1->index;
-    }
-    
-    free( t2->edges );
-    t2->edges =NULL;
-    t2->capacity =0;
-    t2->n =0;*/
     return 0;
 }
 
+/** Given graph @g, mst @m and node @n, computes the shortest edge from @n that isn't a self edge.
+ *  The resulting shortest edge (if any) is stored in @bestedge[i] where i is @n's hypergraph index.*/
 bool
 computeBestEdge( const graph_t* g, const mst_t* m, const node_t* n, cedge_t bestedge[] ) {
     
     //node_t *ptr =&g->nodePtr[node->first];
     //idx_t hindex =m->hindex[n->index];
-    idx_t hindex =computeHIndex( m, n->index );
+    idx_t hindex =mst_computeHIndex( m, n->index );
     cedge_t *be = &bestedge[hindex];
     if( be->from == -2 ) return true;
     if( be->from == -1 ) be->weight = INFINITY;
 
     for( int i =0; i < n->size; i++ ) {
         //idx_t hindex2 =m->hindex[n->edges[i]];
-        idx_t hindex2 =computeHIndex( m, n->edges[i] );
+        idx_t hindex2 =mst_computeHIndex( m, n->edges[i] );
         if( hindex2 == hindex ) continue;
         
         if( n->weights[i] < be->weight ) {
@@ -206,6 +85,7 @@ computeBestEdge( const graph_t* g, const mst_t* m, const node_t* n, cedge_t best
     return true;
 }
 
+/** Return the first node index i in @g for which @nodes[i] is true */ 
 idx_t
 selectStartNode( const graph_t* g, bool nodes[] ) {
     for( int i=0; i < g->m; i++ ) {
@@ -217,6 +97,7 @@ selectStartNode( const graph_t* g, bool nodes[] ) {
     return -1;
 }
 
+/** For a set of nodes @in, add all direct descendants of @in for which @nodes[] is true, to @out. */
 inline void
 makePartition( const graph_t* g, bool nodes[], nodeset_t* in, nodeset_t* out ) {
     out->count =0;
@@ -234,14 +115,14 @@ makePartition( const graph_t* g, bool nodes[], nodeset_t* in, nodeset_t* out ) {
 }
 
 void
-computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool all ) {
+computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool root, int pid, int dst_pid ) {
     
     cedge_t *bestedge = calloc( g->m, sizeof(cedge_t) );
     memset( bestedge, -1, g->m * sizeof(cedge_t) );
     int hbegin =0, hend = g->m;
     // Given the partitions which we need to process, 
     // we need to exclude certain components from being computed
-    if( !all ) {
+    if( !root ) {
         for( int i=0; i < partition[0].count; i++ ) {
             bestedge[m->hindex[partition[0].idxPtr[i]]].from =-2;
             hbegin =fminf( hbegin, m->hindex[partition[0].idxPtr[i]] );
@@ -254,7 +135,7 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool a
 
     while( 1 ) {
        
-        if( all ) printf( "Computing best edges...\n" );
+        //if( all ) printf( "Computing best edges...\n" );
 
         // Process the nodes from each partition by finding their minimum edges
         for( int p =0; p < nparts; p++ ) {
@@ -270,7 +151,7 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool a
 
         int mops =0, calls =0;
 
-        if( all ) printf( "Merging nodes ... \n" );
+        //if( all ) printf( "Merging nodes ... \n" );
 
         // Merge the nodes that were selected by the previous step
         for( int i =hbegin; i < hend; i++ ) {
@@ -280,8 +161,8 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool a
 
             /*idx_t h1 = m->hindex[e->from];
             idx_t h2 = m->hindex[e->to];*/
-            idx_t h1 = computeHIndex( m, e->from );
-            idx_t h2 = computeHIndex( m, e->to );
+            idx_t h1 = mst_computeHIndex( m, e->from );
+            idx_t h2 = mst_computeHIndex( m, e->to );
 
             stree_t* t1 =&m->treePtr[h1];
             stree_t* t2 =&m->treePtr[h2];
@@ -291,6 +172,10 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool a
             if( l != -1 ) {
                 mops++;
             }
+
+            //e->hindex =h1;
+            sendEdge( e, pid, dst_pid );
+
             if( bestedge[h2].from == -2 ) {
                 bestedge[h1].from = -2;
                 e->from =-2;
@@ -298,33 +183,61 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool a
             else e->from =-1;
             calls++;
         }
-        /*if( all )*/ printf( "Merged %d nodes with %d calls.\n", mops, calls );
-        // No nodes were contracted?
+        /*if( all )*/ //printf( "Merged %d nodes with %d calls.\n", mops, calls );
         
-        flattenHIndex( m );
+        mst_flattenHIndex( m );
 
+        // No nodes were contracted?
         if( !mops ) break;
     }
     free( bestedge );
 
 }
 
+/** If @m only contains a list of raw edges @m->edgePtr, compute all MST subtrees by iterating over @m->edgePtr
+ *  and adding the edges to their corresponding hypergraph in @m->treePtr
+ */
+void
+postprocessMST( mst_t* m ) {
+    // Optimze the indices to save some time
+    mst_flattenHIndex( m );
+
+    // Iterate over all raw edges
+    for( int i=0; i < m->nedges; i++ ) {
+        cedge_t* edge =&m->edgePtr[i];
+        idx_t hindex =m->hindex[edge->hindex];
+        // Hypergraph subtree which this edge belongs to
+        stree_t *t =&m->treePtr[hindex];
+        // Increse the capacity of the array if neccesary
+        if( t->capacity < t->n + 1 ) {
+            t->edges = realloc( t->edges, (t->capacity + 128) * sizeof(edge_t) );
+            t->capacity += 128;
+            assert( t->edges != NULL );
+        }
+
+        // Add the edge to the subtree
+        edge_t e = { edge->from, edge->to };
+        t->edges[t->n++] =e;
+        t->totalweight +=edge->weight;
+    }
+}
+
 int
-boruvka4( graph_t* g, mst_t *m  ) {
+boruvka5( graph_t* g, mst_t *m, int procs, int pid  ) {
 
     /* 
      * (1) Setup the partitions
      */
-    const int procs =16;// Number of processes
+    //const int procs =16;// Number of processes
     const int bs =1024; // Block size for pre-allocating
     int cparts =bs;     // Number of allocated partitions
     int nparts =0;      // Actual number of partitions
     nodeset_t* partition = calloc( cparts, sizeof(nodeset_t) );
     for( int i=0; i < cparts; i++ ) {
-        nodeset_make( &partition[i], bs );
+        nodeset_init( &partition[i], bs );
     }
     nodeset_t s0;
-    nodeset_make( &s0, 1 );
+    nodeset_init( &s0, 1 );
     s0.count =1;
 
     bool *nodes = calloc( g->m, sizeof(bool) );
@@ -359,7 +272,7 @@ PICK:
             if( nparts == cparts ) {
                 partition =realloc( partition, (cparts+bs) * sizeof(nodeset_t) );
                 for( int i =nparts; i < nparts+bs; i++ ) {
-                    nodeset_make( &partition[i], bs );
+                    nodeset_init( &partition[i], bs );
                 }
                 cparts+=bs;
             }
@@ -369,53 +282,47 @@ PICK:
 
     // No partitions could be made for the given s0
     if( nparts == 0 ) { 
-        printf( "Could not make any partition for the given start node\n" );
+        rprintf( "Could not make any partition for the given start node\n" );
         return -1;
     }
-    printf( "Created %d partitions \n", nparts );
+    rprintf( "Created %d partitions \n", nparts );
     free( nodes );
 
     /*
      * (2) Setup the mst_t data structure
      */
-    m->n = m->m =g->m;
-    m->hindex = calloc( m->m, sizeof(idx_t) );
-    m->edgePtr = calloc( m->m, sizeof(edge_t) );
-    m->treePtr = calloc( m->m, sizeof(stree_t) );
-    for( int i=0; i < m->m; i++ ) {
-        m->hindex[i] =i;
-        stree_t* t =&m->treePtr[i];
-        t->index =i;
-        t->n =0;
-        t->capacity =1;
-        t->edges = calloc( 1, sizeof(edge_t) );
-    }
+
+    mst_init( m, g->m );
 
     /*
      * (3) Distribute the partitions to different nodes
      */
 
- /*   int nparts_div = (nparts/procs) * procs;
+    int nparts_div = (nparts/procs) * procs;
     for( int np =procs; np > 0; np = np/2 ) {
     int ppn = nparts_div / np; // Part per node
-#pragma omp parallel for
         for( int p=0; p < np; p++ ) {
             int begin = p*ppn;
             int end = (p+1)*ppn;
             if( p==np-1 ) end = nparts;
-            int n = end - begin;
-            if( n<=0 ) continue;
-            printf( "[np=%d] Computing parts %d - %d...\n", np, begin, p*ppn + n );
-            computeMST( g, m, &partition[begin], n, np==1?true:false );
+            int size = end - begin;
+            if( size<=0 ) continue;
+            
+            int src_pid = p * procs/np;
+            int dst_pid = (p/2) * procs/np * 2;
+            
+            rprintf( "[level %d] Rank %d, sending to %d. Computing parts %d - %d...\n", 
+                    procs/np, src_pid, dst_pid, begin, p*ppn + size );
+            
+            if( pid == src_pid )
+                computeMST( g, m, &partition[begin], size, np==1?true:false, pid, dst_pid );
         }
-    }*/
+    }
 
     /*
-     * (4) Finish the MST on a single node
+     * (4) Finish the MST by processing the raw edge list into subtrees
      */
 
-    printf( "Computing from all parts...\n" );
-    computeMST( g, m, partition, nparts, true );
 
     /*
      * (5) Clean up
@@ -430,51 +337,71 @@ PICK:
 
 
 int
-main( int argc, const char** argv ) {
+main( int argc, char** argv ) {
+
+    int procs, pid;
+
+    MPI_Init( &argc, &argv );
+
+    MPI_Comm_rank( MPI_COMM_WORLD, &pid );
+    MPI_Comm_size( MPI_COMM_WORLD, &procs );
 
     if( argc != 2 ) {
-        fprintf( stderr, "(i) Usage: %s [matrix market file]\n", argv[0] );
+        if( pid == 0 )
+            fprintf( stderr, "(i) Usage: %s [matrix market file]\n", argv[0] );
+        MPI_Finalize();
         return -1;
     }
     graph_t g;
 
-    struct timespec start_time, end_time;
-    get_time( &start_time );
+    double start_time, end_time;
+    start_time = MPI_Wtime();
 
     if( !graph_loadMM( argv[1], &g ) ) {
-        fprintf( stderr, "(e) Could not load matrix market file `%s'\n", argv[1] );
+        fprintf( stderr, "(e) [%d] Could not load matrix market file `%s'\n", pid, argv[1] );
+        MPI_Finalize();
         return -1;
     }
 
-    get_time( &end_time );
-    print_elapsed_time( "(t) Load matrix market", &end_time, &start_time );
+    MPI_Barrier( MPI_COMM_WORLD );
+    
+    rprintf("(i) Import ok: graph with %d nodes, %d data points\n", g.m, g.size);
+
+    end_time = MPI_Wtime();
+
+    rprintf( "(t) Loaded matrix market in %gs\n", end_time-start_time );
 
     mst_t mst;
 
-    get_time( &start_time );
+    start_time = MPI_Wtime();
 
-    printf( "Computing MST ... " );
-    int numedges =boruvka4( &g, &mst );
-    printf( "done" );
+    rprintf( "Computing MST ... " );
+    boruvka5( &g, &mst, procs, pid );
     
-    get_time( &end_time );
-    print_elapsed_time( "(t) Compute MST", &end_time, &start_time );
+    end_time = MPI_Wtime();
+
+    rprintf( "(t) Computed MST in %gs\n", end_time-start_time );
     
+    postprocessMST( &mst );
 
    // graph_dump( &g );
   
-    int sgraphs =0;
+    if( pid == 0 ) {
+        int sgraphs =0;
 
-    for( int i=0; i < mst.m; i++ ) {
-        stree_t *t =&mst.treePtr[i];
-        if( t->n != 0 ) {
-                for( int j =0; j < t->n; j++ ) {
-                }
-                printf( "[%d] %d edges, total weight %f\n", ++sgraphs, t->n, t->totalweight );
+        for( int i=0; i < mst.m; i++ ) {
+            stree_t *t =&mst.treePtr[i];
+            if( t->n != 0 ) {
+                    for( int j =0; j < t->n; j++ ) {
+                    }
+                    printf( "[%d] %d edges, total weight %f\n", ++sgraphs, t->n, t->totalweight );
+            }
         }
     }
 
     graph_free( &g );
+    mst_free( &mst );
 
+    MPI_Finalize();
     return 0;
 }
