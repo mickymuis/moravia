@@ -11,23 +11,51 @@
 #include <stdarg.h>
 #include <mpi.h>
 
+#define USE_MPI
+
 void
 rprintf( const char* fmt, ... ) {
     va_list ap;
     va_start(ap,fmt);
+#ifdef USE_MPI
     int pid;
     MPI_Comm_rank( MPI_COMM_WORLD, &pid );
 
     if( pid == 0 )
+#endif
         vprintf( fmt, ap ); 
+
     va_end(ap);
 }
 
 /* Functions related to sending and received MST parts over MPI */
 
 void
-sendEdge( const cedge_t* edge, int pid, int dst_pid ) {
+sendEdge( const cedge_t* edge, int dst_pid ) {
+#ifdef USE_MPI
+    //printf( "Sending edge to %d: (%d,%d,%d,%f)...\n", dst_pid, edge->from, edge->to, edge->hindex, edge->weight );
+    MPI_Send( (void*)edge, 1, mst_mpiEdgeType(), dst_pid, 0, MPI_COMM_WORLD );
+//    printf( "done.\n" );
+#endif
+}
 
+int
+receiveEdges( mst_t *m ) {
+    int n=0;
+#ifdef USE_MPI
+    while( 1 ) {
+        cedge_t edge;
+        MPI_Recv( (void*)&edge, 1, mst_mpiEdgeType(), MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE );
+      //  printf( "Receiving edge: (%d,%d,%d,%f)\n", edge.from, edge.to, edge.hindex, edge.weight );
+
+        if( edge.from == -1 ) break;
+
+        m->edgePtr[m->nedges++] = edge;
+        n++;
+        assert( m->nedges <= m->m );
+    }
+#endif
+    return n;
 }
 
 /* Core functions for MST computation */
@@ -71,14 +99,14 @@ computeBestEdge( const graph_t* g, const mst_t* m, const node_t* n, cedge_t best
             be->to = n->edges[i];
         }
 
-        cedge_t *be2 =&bestedge[hindex2];
+        /*cedge_t *be2 =&bestedge[hindex2];
         if( be2->from == -2 ) continue;
         if( be2->from == -1 ) be2->weight = INFINITY;
         if( n->weights[i] < be2->weight ) {
             be2->weight = n->weights[i];
             be2->from = n->index;
             be2->to = n->edges[i];
-        }
+        }*/
     
     }
 
@@ -116,7 +144,8 @@ makePartition( const graph_t* g, bool nodes[], nodeset_t* in, nodeset_t* out ) {
 
 void
 computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool root, int pid, int dst_pid ) {
-    
+   
+    int debug_sent =0;
     cedge_t *bestedge = calloc( g->m, sizeof(cedge_t) );
     memset( bestedge, -1, g->m * sizeof(cedge_t) );
     int hbegin =0, hend = g->m;
@@ -132,6 +161,15 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool r
             hend =fmaxf( hend, m->hindex[partition[nparts-1].idxPtr[i]] );
         }
     }
+
+#ifdef USE_MPI
+    // We are a 'sending process' and therefore we first send what we have so far
+    if( !root && pid != dst_pid ) {
+        for( int i =0; i < m->nedges; i++ ) {
+            sendEdge( &m->edgePtr[i], dst_pid );
+        }
+    }
+#endif
 
     while( 1 ) {
        
@@ -167,14 +205,22 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool r
             stree_t* t1 =&m->treePtr[h1];
             stree_t* t2 =&m->treePtr[h2];
             
+            // HACK
+            // We should add another field to cedge_t to store hindex2 as we need it to fix the hindex map afterwards
+            e->to = h2;
+            // END HACK
+            
             // Contract the source node with the destination node of the edge
             int l = contractNodes( m, t1, t2, e );
             if( l != -1 ) {
                 mops++;
+#ifdef USE_MPI
+                if( !root && pid != dst_pid ) {
+                    sendEdge( e, dst_pid );
+                    debug_sent++;
+                }
+#endif
             }
-
-            //e->hindex =h1;
-            sendEdge( e, pid, dst_pid );
 
             if( bestedge[h2].from == -2 ) {
                 bestedge[h1].from = -2;
@@ -183,7 +229,7 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool r
             else e->from =-1;
             calls++;
         }
-        /*if( all )*/ //printf( "Merged %d nodes with %d calls.\n", mops, calls );
+        printf( "[%d] Merged %d nodes with %d calls.\n", pid, mops, calls );
         
         mst_flattenHIndex( m );
 
@@ -192,6 +238,23 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool r
     }
     free( bestedge );
 
+    // Synchonize with the other nodes
+#ifdef USE_MPI
+    if( root) return;
+    if( pid != dst_pid ) {
+        // This node is only sending
+        static cedge_t end ={ -1, -1, -1, 0.0 };
+        sendEdge( &end, dst_pid ); // Send the termination signal
+        printf( "[%d] Sent %d edges to %d\n", pid, debug_sent, dst_pid );
+
+    } else {
+        // This node is only receiving
+        cedge_t *recvEdges = &m->edgePtr[m->nedges];
+        int n = receiveEdges( m );
+        mst_updateHIndex( m, recvEdges, n );
+        printf( "[%d] Received %d edges\n", pid, n );
+    }
+#endif
 }
 
 /** If @m only contains a list of raw edges @m->edgePtr, compute all MST subtrees by iterating over @m->edgePtr
@@ -311,13 +374,22 @@ PICK:
             int src_pid = p * procs/np;
             int dst_pid = (p/2) * procs/np * 2;
             
-            rprintf( "[level %d] Rank %d, sending to %d. Computing parts %d - %d...\n", 
-                    procs/np, src_pid, dst_pid, begin, p*ppn + size );
-            
-            if( pid == src_pid )
-                computeMST( g, m, &partition[begin], size, np==1?true:false, pid, dst_pid );
+#ifdef USE_MPI
+            if( pid == src_pid ) {
+#endif
+                printf( "[level %d] Rank %d, sending to %d. Computing parts %d - %d...\n", 
+                        procs/np, src_pid, dst_pid, begin, p*ppn + size );
+                computeMST( g, m, &partition[begin], size, np==1?true:false, src_pid, dst_pid );
+#ifdef USE_MPI
+            }
+#endif
         }
+#ifdef USE_MPI
+        MPI_Barrier( MPI_COMM_WORLD );
+#endif
     }
+
+//    computeMST( g, m, &partition[0], nparts, true, 0, 0 );
 
     /*
      * (4) Finish the MST by processing the raw edge list into subtrees
@@ -339,52 +411,66 @@ PICK:
 int
 main( int argc, char** argv ) {
 
-    int procs, pid;
-
+    // Setup MPI
+    int procs =4, pid =0;
+#ifdef USE_MPI
     MPI_Init( &argc, &argv );
 
     MPI_Comm_rank( MPI_COMM_WORLD, &pid );
     MPI_Comm_size( MPI_COMM_WORLD, &procs );
 
+    // Create the custom MPI-type used to transmit edges between nodes
+    mst_mpiEdgeType();
+#endif
+
     if( argc != 2 ) {
         if( pid == 0 )
             fprintf( stderr, "(i) Usage: %s [matrix market file]\n", argv[0] );
+#ifdef USE_MPI
         MPI_Finalize();
+#endif
         return -1;
     }
+
     graph_t g;
+
+    rprintf( "Loading graph from matrix market file...\n" );
 
     double start_time, end_time;
     start_time = MPI_Wtime();
 
     if( !graph_loadMM( argv[1], &g ) ) {
         fprintf( stderr, "(e) [%d] Could not load matrix market file `%s'\n", pid, argv[1] );
+#ifdef USE_MPI
         MPI_Finalize();
+#endif
         return -1;
     }
 
+#ifdef USE_MPI
     MPI_Barrier( MPI_COMM_WORLD );
+#endif
     
     rprintf("(i) Import ok: graph with %d nodes, %d data points\n", g.m, g.size);
 
     end_time = MPI_Wtime();
 
     rprintf( "(t) Loaded matrix market in %gs\n", end_time-start_time );
+    rprintf( "Computing MST ... " );
 
     mst_t mst;
 
     start_time = MPI_Wtime();
-
-    rprintf( "Computing MST ... " );
     boruvka5( &g, &mst, procs, pid );
-    
     end_time = MPI_Wtime();
 
     rprintf( "(t) Computed MST in %gs\n", end_time-start_time );
     
+    start_time = MPI_Wtime();
     postprocessMST( &mst );
+    end_time = MPI_Wtime();
 
-   // graph_dump( &g );
+    rprintf( "(t) Computed subtrees from edge data in %gs\n", end_time-start_time );
   
     if( pid == 0 ) {
         int sgraphs =0;
@@ -393,8 +479,9 @@ main( int argc, char** argv ) {
             stree_t *t =&mst.treePtr[i];
             if( t->n != 0 ) {
                     for( int j =0; j < t->n; j++ ) {
+                        // We could print the edges here
                     }
-                    printf( "[%d] %d edges, total weight %f\n", ++sgraphs, t->n, t->totalweight );
+                    rprintf( "[%d] %d edges, total weight %f\n", ++sgraphs, t->n, t->totalweight );
             }
         }
     }
@@ -402,6 +489,8 @@ main( int argc, char** argv ) {
     graph_free( &g );
     mst_free( &mst );
 
+#ifdef USE_MPI
     MPI_Finalize();
+#endif
     return 0;
 }

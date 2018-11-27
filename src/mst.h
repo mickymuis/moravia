@@ -2,6 +2,7 @@
 #define __MST_H__
 
 #include "graph.h"
+#include <mpi.h>
 
 typedef struct {
     idx_t from, to, hindex;
@@ -65,5 +66,22 @@ mst_flattenHIndex( mst_t *m ) {
     free( flat );
     free( queue );
 }
+
+inline static void
+mst_updateHIndex( mst_t *m, const cedge_t *edgePtr, int n ) {
+    for( int i =0; i < n; i++ ) {
+        cedge_t *edge = &edgePtr[i];
+        m->hindex[edge->from] = edge->hindex;
+        m->hindex[edge->to]   = edge->hindex;
+        /*m->hindex[mst_computeHIndex(m,edge->from)] = edge->hindex;
+        m->hindex[mst_computeHIndex(m,edge->to)]   = edge->hindex;*/
+    }
+    mst_flattenHIndex( m );
+}
+
+/** Returns the MPI datatype to cover the cedge_t type used by the mst_t structure
+ */
+MPI_Datatype
+mst_mpiEdgeType();
 
 #endif
