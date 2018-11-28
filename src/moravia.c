@@ -33,9 +33,7 @@ rprintf( const char* fmt, ... ) {
 void
 sendEdge( const cedge_t* edge, int dst_pid ) {
 #ifdef USE_MPI
-    //printf( "Sending edge to %d: (%d,%d,%d,%f)...\n", dst_pid, edge->from, edge->to, edge->hindex, edge->weight );
     MPI_Send( (void*)edge, 1, mst_mpiEdgeType(), dst_pid, 0, MPI_COMM_WORLD );
-//    printf( "done.\n" );
 #endif
 }
 
@@ -46,7 +44,6 @@ receiveEdges( mst_t *m ) {
     while( 1 ) {
         cedge_t edge;
         MPI_Recv( (void*)&edge, 1, mst_mpiEdgeType(), MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE );
-      //  printf( "Receiving edge: (%d,%d,%d,%f)\n", edge.from, edge.to, edge.hindex, edge.weight );
 
         if( edge.from == -1 ) break;
 
@@ -81,15 +78,12 @@ contractNodes( mst_t* m, stree_t* t1, stree_t* t2, cedge_t* edge ) {
 bool
 computeBestEdge( const graph_t* g, const mst_t* m, const node_t* n, cedge_t bestedge[] ) {
     
-    //node_t *ptr =&g->nodePtr[node->first];
-    //idx_t hindex =m->hindex[n->index];
     idx_t hindex =mst_computeHIndex( m, n->index );
     cedge_t *be = &bestedge[hindex];
     if( be->from == -2 ) return true;
     if( be->from == -1 ) be->weight = INFINITY;
 
     for( int i =0; i < n->size; i++ ) {
-        //idx_t hindex2 =m->hindex[n->edges[i]];
         idx_t hindex2 =mst_computeHIndex( m, n->edges[i] );
         if( hindex2 == hindex ) continue;
         
@@ -99,15 +93,16 @@ computeBestEdge( const graph_t* g, const mst_t* m, const node_t* n, cedge_t best
             be->to = n->edges[i];
         }
 
-        /*cedge_t *be2 =&bestedge[hindex2];
+#ifdef FAST_SEQUENTIAL
+        cedge_t *be2 =&bestedge[hindex2];
         if( be2->from == -2 ) continue;
         if( be2->from == -1 ) be2->weight = INFINITY;
         if( n->weights[i] < be2->weight ) {
             be2->weight = n->weights[i];
             be2->from = n->index;
             be2->to = n->edges[i];
-        }*/
-    
+        }
+#endif
     }
 
     return true;
@@ -145,10 +140,11 @@ makePartition( const graph_t* g, bool nodes[], nodeset_t* in, nodeset_t* out ) {
 void
 computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool root, int pid, int dst_pid ) {
    
-    int debug_sent =0;
+    int hbegin =0, hend = g->m;
     cedge_t *bestedge = calloc( g->m, sizeof(cedge_t) );
     memset( bestedge, -1, g->m * sizeof(cedge_t) );
-    int hbegin =0, hend = g->m;
+    int debug_sent =0;
+#ifndef FAST_SEQUENTIAL
     // Given the partitions which we need to process, 
     // we need to exclude certain components from being computed
     if( !root ) {
@@ -161,7 +157,7 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool r
             hend =fmaxf( hend, m->hindex[partition[nparts-1].idxPtr[i]] );
         }
     }
-
+#endif
 #ifdef USE_MPI
     // We are a 'sending process' and therefore we first send what we have so far
     if( !root && pid != dst_pid ) {
@@ -173,23 +169,15 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool r
 
     while( 1 ) {
        
-        //if( all ) printf( "Computing best edges...\n" );
-
         // Process the nodes from each partition by finding their minimum edges
         for( int p =0; p < nparts; p++ ) {
-           // printf( "%d ", p );
             for( int i =0; i < partition[p].count ; i++ ) {
                 node_t *n = &g->nodePtr[partition[p].idxPtr[i]];
-                
                 computeBestEdge( g, m, n, bestedge );
-
-               // printf( "Partition %d: (%d)->(%d)\n", p, from, to );
             }
         }
 
         int mops =0, calls =0;
-
-        //if( all ) printf( "Merging nodes ... \n" );
 
         // Merge the nodes that were selected by the previous step
         for( int i =hbegin; i < hend; i++ ) {
@@ -245,14 +233,12 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool r
         // This node is only sending
         static cedge_t end ={ -1, -1, -1, 0.0 };
         sendEdge( &end, dst_pid ); // Send the termination signal
-  //      printf( "[%d] Sent %d edges to %d\n", pid, debug_sent, dst_pid );
 
     } else {
         // This node is only receiving
         cedge_t *recvEdges = &m->edgePtr[m->nedges];
         int n = receiveEdges( m );
         mst_updateHIndex( m, recvEdges, n );
-    //    printf( "[%d] Received %d edges\n", pid, n );
     }
 #endif
 }
@@ -262,7 +248,7 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool r
  */
 void
 postprocessMST( mst_t* m ) {
-    // Optimze the indices to save some time
+    // Optimize the indices to save some time
     mst_flattenHIndex( m );
 
     // Iterate over all raw edges
@@ -271,7 +257,7 @@ postprocessMST( mst_t* m ) {
         idx_t hindex =m->hindex[edge->hindex];
         // Hypergraph subtree which this edge belongs to
         stree_t *t =&m->treePtr[hindex];
-        // Increse the capacity of the array if neccesary
+        // Increase the capacity of the array if neccesary
         if( t->capacity < t->n + 1 ) {
             t->edges = realloc( t->edges, (t->capacity + 128) * sizeof(edge_t) );
             t->capacity += 128;
@@ -291,6 +277,7 @@ boruvka5( graph_t* g, mst_t *m, int procs, int pid  ) {
     /* 
      * (1) Setup the partitions
      */
+#ifndef FAST_SEQUENTIAL
     //const int procs =16;// Number of processes
     const int bs =1024; // Block size for pre-allocating
     int cparts =bs;     // Number of allocated partitions
@@ -328,8 +315,6 @@ PICK:
             if( out->count == 0 ) {
                 goto PICK;
             }
-            /*printf( "PARTITION #%d\n------------\n", nparts );
-            nodeset_print( out );*/
             nparts++;
 
             if( nparts == cparts ) {
@@ -350,7 +335,7 @@ PICK:
     }
     rprintf( "Created %d partitions \n", nparts );
     free( nodes );
-
+#endif
     /*
      * (2) Setup the mst_t data structure
      */
@@ -360,7 +345,7 @@ PICK:
     /*
      * (3) Distribute the partitions to different nodes
      */
-
+#ifndef FAST_SEQUENTIAL
     int nparts_div = (nparts/procs) * procs;
     for( int np =procs; np > 0; np = np/2 ) {
     int ppn = nparts_div / np; // Part per node
@@ -384,26 +369,24 @@ PICK:
             }
 #endif
         }
-/*#ifdef USE_MPI
+        // Uncomment on weird segfaults in edge cases :)
+/*#ifdef USE_MP
         MPI_Barrier( MPI_COMM_WORLD );
 #endif*/
     }
-
-//    computeMST( g, m, &partition[0], nparts, true, 0, 0 );
-
     /*
-     * (4) Finish the MST by processing the raw edge list into subtrees
-     */
-
-
-    /*
-     * (5) Clean up
+     * (4) Clean up
      */
     for( int i=0; i < cparts; i++ ) {
         nodeset_free( &partition[i] );
     }
     nodeset_free( &s0 );
     free( partition );
+
+#else
+
+#endif
+
     return 0;
 }
 
