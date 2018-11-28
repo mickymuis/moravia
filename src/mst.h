@@ -4,7 +4,7 @@
 #include "graph.h"
 #include <mpi.h>
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
     idx_t from, to, hindex;
     float weight;
 } cedge_t;

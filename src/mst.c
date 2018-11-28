@@ -42,7 +42,8 @@ mst_mpiEdgeType() {
 
     if( MPI_CEDGE == MPI_INT ) {
 
-        MPI_Type_create_struct( 4, blocklengths, offsets, types, &MPI_CEDGE );
+//        MPI_Type_create_struct( 4, blocklengths, offsets, types, &MPI_CEDGE );
+        MPI_Type_contiguous(3, MPI_INT, &MPI_CEDGE);
         MPI_Type_commit( &MPI_CEDGE );
 
     }

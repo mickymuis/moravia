@@ -229,7 +229,7 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool r
             else e->from =-1;
             calls++;
         }
-        printf( "[%d] Merged %d nodes with %d calls.\n", pid, mops, calls );
+//        printf( "[%d] Merged %d nodes with %d calls.\n", pid, mops, calls );
         
         mst_flattenHIndex( m );
 
@@ -245,14 +245,14 @@ computeMST( const graph_t* g, mst_t* m, nodeset_t* partition, int nparts, bool r
         // This node is only sending
         static cedge_t end ={ -1, -1, -1, 0.0 };
         sendEdge( &end, dst_pid ); // Send the termination signal
-        printf( "[%d] Sent %d edges to %d\n", pid, debug_sent, dst_pid );
+  //      printf( "[%d] Sent %d edges to %d\n", pid, debug_sent, dst_pid );
 
     } else {
         // This node is only receiving
         cedge_t *recvEdges = &m->edgePtr[m->nedges];
         int n = receiveEdges( m );
         mst_updateHIndex( m, recvEdges, n );
-        printf( "[%d] Received %d edges\n", pid, n );
+    //    printf( "[%d] Received %d edges\n", pid, n );
     }
 #endif
 }
@@ -377,8 +377,8 @@ PICK:
 #ifdef USE_MPI
             if( pid == src_pid ) {
 #endif
-                printf( "[level %d] Rank %d, sending to %d. Computing parts %d - %d...\n", 
-                        procs/np, src_pid, dst_pid, begin, p*ppn + size );
+     //           printf( "[level %d] Rank %d, sending to %d. Computing parts %d - %d...\n", 
+     //                   procs/np, src_pid, dst_pid, begin, p*ppn + size );
                 computeMST( g, m, &partition[begin], size, np==1?true:false, src_pid, dst_pid );
 #ifdef USE_MPI
             }
