@@ -10,6 +10,7 @@
 
 #include "mmio.h"
 
+//#define FAST_SEQUENTIAL
 
 /*
  * Load graph market file
@@ -96,7 +97,11 @@ read_matrix_market2(const char *filename, graph_t* g )
 
         //if( val == 0.0 ) continue;
 
+#ifdef FAST_SEQUENTIAL
+        bool swap =true;
+#else
         bool swap =false;
+#endif
         node_t* n;
 L0:
         if( row == col ) continue;
@@ -112,10 +117,12 @@ L0:
         n->degree++;
         g->size++;
 
+#ifndef FAST_SEQUENTIAL
         if (mm_is_symmetric(matcode) && row != col && !swap ) {
             swap =true;
             goto L0;
         }
+#endif
     }
 
     fclose(fh);

@@ -12,6 +12,7 @@
 #include <mpi.h>
 
 #define USE_MPI
+//#define FAST_SEQUENTIAL
 
 void
 rprintf( const char* fmt, ... ) {
@@ -384,6 +385,13 @@ PICK:
     free( partition );
 
 #else
+    nodeset_t all;
+    nodeset_init( &all, g->m );
+    all.count =g->m;
+    for( int i =0; i < g->m; i++ )
+        all.idxPtr[i] = i;
+    computeMST( g, m, &all, 1, true, 0, 0 );
+    nodeset_free( &all );
 
 #endif
 
@@ -396,8 +404,8 @@ main( int argc, char** argv ) {
 
     // Setup MPI
     int procs =4, pid =0;
-#ifdef USE_MPI
     MPI_Init( &argc, &argv );
+#ifdef USE_MPI
 
     MPI_Comm_rank( MPI_COMM_WORLD, &pid );
     MPI_Comm_size( MPI_COMM_WORLD, &procs );
