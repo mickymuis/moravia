@@ -32,18 +32,18 @@ mst_free( mst_t *m ) {
 MPI_Datatype
 mst_mpiEdgeType() {
     static                       MPI_Datatype MPI_CEDGE = MPI_INT;
-    static const int             blocklengths[4] = { 1, 1, 1, 1 };
+/*    static const int             blocklengths[4] = { 1, 1, 1, 1 };
     static const MPI_Datatype    types[4]        = { MPI_INT, MPI_INT, MPI_INT, MPI_FLOAT };
     static const MPI_Aint        offsets[4]      = { 
                                                     offsetof(cedge_t,from), 
                                                     offsetof(cedge_t,to), 
                                                     offsetof(cedge_t,hindex), 
                                                     offsetof(cedge_t,weight) };
-
+*/
     if( MPI_CEDGE == MPI_INT ) {
 
 //        MPI_Type_create_struct( 4, blocklengths, offsets, types, &MPI_CEDGE );
-        MPI_Type_contiguous(3, MPI_INT, &MPI_CEDGE);
+        MPI_Type_contiguous(4, MPI_INT, &MPI_CEDGE);
         MPI_Type_commit( &MPI_CEDGE );
 
     }

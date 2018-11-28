@@ -384,9 +384,9 @@ PICK:
             }
 #endif
         }
-#ifdef USE_MPI
+/*#ifdef USE_MPI
         MPI_Barrier( MPI_COMM_WORLD );
-#endif
+#endif*/
     }
 
 //    computeMST( g, m, &partition[0], nparts, true, 0, 0 );
